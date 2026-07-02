@@ -7,12 +7,16 @@
     "ios": "react-native run-ios",
     "lint": "eslint .",
     "start": "react-native start",
+    "bundle:ios": "react-native bundle-mf-host --entry-file index.js --platform ios --dev false --bundle-output build/ios/main.jsbundle --assets-dest build/ios",
+    "bundle:android": "react-native bundle-mf-host --entry-file index.js --platform android --dev false --bundle-output build/android/index.android.bundle --assets-dest build/android",
     "test": "jest"
   },
   "dependencies": {
+    "@module-federation/metro": "^2.6.0",
+    "@module-federation/metro-plugin-rnc-cli": "^2.6.0",
+    "@react-native/new-app-screen": "0.86.0",
     "react": "19.2.3",
     "react-native": "0.86.0",
-    "@react-native/new-app-screen": "0.86.0",
     "react-native-safe-area-context": "^5.5.2"
   },
   "devDependencies": {

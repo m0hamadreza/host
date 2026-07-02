@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <!--
+      Allows plaintext HTTP only to the Module Federation remote dev host on the LAN.
+      Needed for release builds, where Android blocks cleartext by default, so the
+      host can fetch mini's mf-manifest.json / remoteEntry.bundle from `npx serve`.
+      Remove this once the remote is served over HTTPS (real CDN).
+    -->
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="true">192.168.1.188</domain>
+    </domain-config>
+</network-security-config>
