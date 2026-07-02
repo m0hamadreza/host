@@ -1,97 +1,197 @@
-This is a new [**React Native**](https://reactnative.dev) project, bootstrapped using [`@react-native-community/cli`](https://github.com/react-native-community/cli).
+# Host App — Module Federation Host
 
-# Getting Started
+A React Native **host** application that consumes remote modules at runtime via
+[Module Federation](https://module-federation.io/) (Metro implementation:
+[`@module-federation/metro`](https://www.npmjs.com/package/@module-federation/metro)).
 
-> **Note**: Make sure you have completed the [Set Up Your Environment](https://reactnative.dev/docs/set-up-your-environment) guide before proceeding.
+This app is the shell that boots on the device. It renders its own UI **and**
+lazily loads the `App` component exposed by the [`mini`](../mini) remote over
+HTTP — so `mini` can be updated and redeployed without rebuilding or
+resubmitting this host.
 
-## Step 1: Start Metro
+- **Role:** Host (consumer)
+- **Consumes:** `mini` remote (`mini/app` → `mini/App.tsx`)
+- **React Native:** 0.86.0 · **React:** 19.2.3 · **Node:** ≥ 22.11.0
 
-First, you will need to run **Metro**, the JavaScript build tool for React Native.
+---
 
-To start the Metro dev server, run the following command from the root of your React Native project:
+## How it fits together
 
-```sh
-# Using npm
-npm start
-
-# OR using Yarn
-yarn start
+```
+┌──────────────────────────┐         HTTP (mf-manifest.json          ┌─────────────────────────┐
+│  HOST (this app)          │◀────────  + remoteEntry.bundle) ────────│  MINI (remote)          │
+│                           │                                         │                         │
+│  App.tsx                  │                                         │  exposes ./app          │
+│   └─ React.lazy(          │                                         │   → App.tsx             │
+│        () => import(      │                                         │                         │
+│          'mini/app'))     │                                         │  served from a URL      │
+│                           │                                         │  (dev server or CDN)    │
+│  provides react +         │                                         │  borrows host's         │
+│  react-native as EAGER    │                                         │  react / react-native   │
+│  shared singletons        │                                         │  singletons             │
+└──────────────────────────┘                                         └─────────────────────────┘
 ```
 
-## Step 2: Build and run your app
+Key wiring in this project:
 
-With Metro running, open a new terminal window/pane from the root of your React Native project, and use one of the following commands to build and run your Android or iOS app:
+| File | What it does |
+|------|--------------|
+| [`metro.config.js`](metro.config.js) | Declares `name: 'host'`, the `remotes` map (where to fetch `mini`), and `shared` deps (`react`, `react-native` as eager singletons). |
+| [`index.js`](index.js) | Registers the app with `withAsyncStartup(() => require('./App'))` so startup waits for the federation runtime to initialize shared deps before rendering. |
+| [`App.tsx`](App.tsx) | `const MiniApp = React.lazy(() => import('mini/app'))` — loads the remote, wrapped in `<Suspense>` with a loading fallback. |
 
-### Android
+> ⚠️ **Do not add an `exposes` key to this host.** The plugin treats any present
+> (even empty) `exposes` object as truthy and reclassifies the app as a remote
+> (`isHost = !exposes`), which breaks the dev-server URL resolution at runtime.
+> This is documented inline in [`metro.config.js`](metro.config.js).
 
-```sh
-# Using npm
-npm run android
+---
 
-# OR using Yarn
-yarn android
+## Prerequisites
+
+- Node ≥ 22.11.0
+- Android Studio / Xcode set up per the
+  [RN environment guide](https://reactnative.dev/docs/set-up-your-environment)
+- Dependencies installed: `npm install` (and `bundle install && cd ios && pod install` for iOS)
+
+---
+
+## Development
+
+The host needs the `mini` remote to be reachable. Pick **one** of the two remote
+sources below, then start the host.
+
+### 1. Start the remote (`mini`)
+
+**Option A — live dev server (recommended for active development):**
+```bash
+cd ../mini
+npm run start:remote      # MF_REMOTE=1 react-native start --port 8082
 ```
 
-### iOS
-
-For iOS, remember to install CocoaPods dependencies (this only needs to be run on first clone or after updating native deps).
-
-The first time you create a new project, run the Ruby bundler to install CocoaPods itself:
-
-```sh
-bundle install
+**Option B — serve a prebuilt static remote bundle:**
+```bash
+cd ../mini
+npm run bundle:android    # or bundle:ios — produces dist/<platform>/
+npx serve dist/android -l 8082
 ```
 
-Then, and every time you update your native dependencies, run:
+Either way the host expects the remote's manifest at the URL configured in
+[`metro.config.js`](metro.config.js) `remotes` (default points at a LAN
+IP/`localhost` on port `8082`).
 
-```sh
-bundle exec pod install
+### 2. Start the host
+
+```bash
+npm start                 # start Metro for the host
+npm run android           # build + launch on Android (separate terminal)
+npm run ios               # build + launch on iOS
 ```
 
-For more information, please visit [CocoaPods Getting Started guide](https://guides.cocoapods.org/using/getting-started.html).
+On launch the host renders "Host App" and then streams in the `mini` remote
+inside a `<Suspense>` boundary.
 
-```sh
-# Using npm
-npm run ios
+> The `remotes` URL in `metro.config.js` must be reachable **from the
+> device/emulator**, not just your Mac. Use your machine's LAN IP (e.g.
+> `192.168.x.x`) rather than `localhost` when running on a physical device.
 
-# OR using Yarn
-yarn ios
+---
+
+## Bundling (offline / manual)
+
+These produce the host's own JS bundle for embedding in the native binary. The
+`bundle-mf-host` command comes from `@module-federation/metro-plugin-rnc-cli`.
+
+```bash
+npm run bundle:ios        # → build/ios/main.jsbundle           (+ assets)
+npm run bundle:android    # → build/android/index.android.bundle (+ assets)
 ```
 
-If everything is set up correctly, you should see your new app running in the Android Emulator, iOS Simulator, or your connected device.
+Both scripts use `--dev false` (minified production bundle) and set
+`--bundle-output` / `--assets-dest` explicitly — **required**, because
+`bundle-mf-host` has no default output path (unlike stock `react-native bundle`).
 
-This is one way to run your app — you can also build it directly from Android Studio or Xcode.
+The host bundle contains this app's code plus the **eager** `react` /
+`react-native` singletons. It does **not** contain `mini` — that is fetched at
+runtime.
 
-## Step 3: Modify your app
+> For a normal release build you usually don't run these by hand; Gradle/Xcode
+> invoke the bundler automatically (see below).
 
-Now that you have successfully run the app, let's make changes!
+---
 
-Open `App.tsx` in your text editor of choice and make some changes. When you save, your app will automatically update and reflect these changes — this is powered by [Fast Refresh](https://reactnative.dev/docs/fast-refresh).
+## Production build (Android)
 
-When you want to forcefully reload, for example to reset the state of your app, you can perform a full reload:
+A Module Federation release differs from a stock RN release in three places:
 
-- **Android**: Press the <kbd>R</kbd> key twice or select **"Reload"** from the **Dev Menu**, accessed via <kbd>Ctrl</kbd> + <kbd>M</kbd> (Windows/Linux) or <kbd>Cmd ⌘</kbd> + <kbd>M</kbd> (macOS).
-- **iOS**: Press <kbd>R</kbd> in iOS Simulator.
+**1. Point the host at a real remote URL** (baked into the bundle at build time).
+In [`metro.config.js`](metro.config.js), set `remotes` to where `mini` is hosted:
+```js
+remotes: { mini: 'mini@https://cdn.example.com/mini/android/mf-manifest.json' }
+```
+Upload `mini/dist/android/` to that URL first.
 
-## Congratulations! :tada:
+**2. Tell Gradle to use the MF bundler.** In
+[`android/app/build.gradle`](android/app/build.gradle), inside the `react { }`
+block:
+```gradle
+bundleCommand = "bundle-mf-host"
+```
+Without this, Gradle runs the plain `bundle` command and federation isn't wired up.
 
-You've successfully run and modified your React Native App. :partying_face:
+**3. Build the artifact:**
+```bash
+cd android
+./gradlew assembleRelease    # → app/build/outputs/apk/release/app-release.apk
+./gradlew bundleRelease      # → app/build/outputs/bundle/release/app-release.aab (Play Store)
+```
 
-### Now what?
+### Cleartext HTTP for LAN testing
 
-- If you want to add this new React Native code to an existing application, check out the [Integration guide](https://reactnative.dev/docs/integration-with-existing-apps).
-- If you're curious to learn more about React Native, check out the [docs](https://reactnative.dev/docs/getting-started).
+Android release builds set `usesCleartextTraffic=false`, so a release APK will
+**refuse** to fetch a remote served over plain `http://`. For local LAN testing,
+[`res/xml/network_security_config.xml`](android/app/src/main/res/xml/network_security_config.xml)
+whitelists cleartext to a single dev IP, referenced from
+[`AndroidManifest.xml`](android/app/src/main/AndroidManifest.xml). **Remove this
+and serve the remote over HTTPS for real production.**
 
-# Troubleshooting
+### Signing ⚠️
 
-If you're having issues getting the above steps to work, see the [Troubleshooting](https://reactnative.dev/docs/troubleshooting) page.
+[`android/app/build.gradle`](android/app/build.gradle) currently signs `release`
+with the **debug** keystore. Play Store will reject that — generate your own
+keystore per [Signed APK guide](https://reactnative.dev/docs/signed-apk-android)
+before shipping.
 
-# Learn More
+---
 
-To learn more about React Native, take a look at the following resources:
+## npm scripts
 
-- [React Native Website](https://reactnative.dev) - learn more about React Native.
-- [Getting Started](https://reactnative.dev/docs/environment-setup) - an **overview** of React Native and how setup your environment.
-- [Learn the Basics](https://reactnative.dev/docs/getting-started) - a **guided tour** of the React Native **basics**.
-- [Blog](https://reactnative.dev/blog) - read the latest official React Native **Blog** posts.
-- [`@facebook/react-native`](https://github.com/facebook/react-native) - the Open Source; GitHub **repository** for React Native.
+| Script | Description |
+|--------|-------------|
+| `npm start` | Start the host Metro dev server |
+| `npm run android` | Build & launch on Android |
+| `npm run ios` | Build & launch on iOS |
+| `npm run bundle:ios` | Offline production host bundle for iOS |
+| `npm run bundle:android` | Offline production host bundle for Android |
+| `npm run lint` | ESLint |
+| `npm test` | Jest |
+
+---
+
+## Troubleshooting
+
+| Symptom | Cause / fix |
+|---------|-------------|
+| `property is not writable` in `fetchThenEvalJs.ts` | The remote bundle was built in **dev** mode and served statically into an initialized host. Rebuild `mini` with `--dev false` (its `bundle:*` scripts already do this). |
+| `Cannot determine dev server URL for host remote` | An `exposes` key was added to this host's `metro.config.js`. Remove it — a pure host must have no `exposes`. |
+| Host loads but `mini` never appears / network error | Remote URL in `remotes` is unreachable from the device. Use LAN IP not `localhost`; confirm the dev server / `npx serve` is running on port `8082`. |
+| Release APK can't fetch remote (works in debug) | Cleartext blocked in release. Serve the remote over HTTPS, or whitelist the IP in `network_security_config.xml`. |
+| Remote manifest shows `"exposes": []` | `mini` was bundled without `MF_REMOTE=1`. Use `mini`'s `bundle:*` scripts, which set it. |
+
+---
+
+## Learn more
+
+- [Module Federation docs](https://module-federation.io/)
+- [`@module-federation/metro`](https://www.npmjs.com/package/@module-federation/metro)
+- [React Native docs](https://reactnative.dev)
